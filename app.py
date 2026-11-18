@@ -287,71 +287,135 @@ page = st.sidebar.radio("画面", ["画像を判定する", "保存データを�
 # 5. 保存データ確認画面
 # -------------------------------------------------
 if page == "保存データを確認する":
-    st.header("保存データの確認")
+    st.header("保存データ")
+    st.caption("過去の検出結果を確認・ダウンロード・整理できます。")
 
-    st.subheader("場所をCSVから一括登録")
-    st.caption("CSVの「場所」列、または1列目に場所を記入してください。")
-    locations_csv = st.file_uploader(
-        "場所一覧のCSVファイル",
-        type=["csv"],
-        key="locations_csv_uploader",
-    )
-    if locations_csv is not None:
-        if st.button("CSVの場所を登録する", key="import_locations_button"):
-            try:
-                added, total = import_locations_from_csv(locations_csv.getvalue())
-                set_flash(f"{total}件の場所を読み込みました。新規登録は{added}件です。")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"CSVを読み込めませんでした: {exc}")
-
-    st.divider()
-    st.subheader("過去に登録した場所の管理")
-    saved_locations = load_locations()
-    if saved_locations:
-        selected_locations = st.multiselect(
-            "削除する場所を複数選択してください",
-            options=saved_locations,
-            key="locations_to_delete",
-        )
-        if st.button("🗑️ 選択した場所をまとめて削除", disabled=not selected_locations):
-            removed = delete_locations(selected_locations)
-            st.session_state.pop("locations_to_delete", None)
-            set_flash(f"過去の場所を{removed}件削除しました。")
-            st.rerun()
-    else:
-        st.info("登録済みの場所はありません。")
-
-    st.divider()
     records = load_results()
+    saved_locations = load_locations()
 
+    total_pipes = sum(
+        int(str(record.get("最終合計", "0") or "0").replace(",", ""))
+        if str(record.get("最終合計", "0") or "0").replace(",", "").isdigit()
+        else 0
+        for record in records
+    )
+
+    metric_cols = st.columns(3)
+    with metric_cols[0]:
+        st.metric("保存データ", f"{len(records)} 件")
+    with metric_cols[1]:
+        st.metric("登録場所", f"{len(saved_locations)} 件")
+    with metric_cols[2]:
+        st.metric("記録したパイプ", f"{total_pipes:,} 本")
+
+    st.divider()
+
+    with st.expander("📍 場所の登録・管理", expanded=False):
+        st.markdown("**CSVから場所を一括登録**")
+        st.caption("CSVの「場所」列、または1列目に場所を記入してください。")
+        locations_csv = st.file_uploader(
+            "場所一覧のCSVファイル",
+            type=["csv"],
+            key="locations_csv_uploader",
+        )
+        if locations_csv is not None:
+            if st.button("CSVの場所を登録する", key="import_locations_button"):
+                try:
+                    added, total = import_locations_from_csv(locations_csv.getvalue())
+                    set_flash(f"{total}件の場所を読み込みました。新規登録は{added}件です。")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"CSVを読み込めませんでした: {exc}")
+
+        st.divider()
+        st.markdown("**登録済みの場所**")
+        saved_locations = load_locations()
+        if saved_locations:
+            st.caption(f"現在 {len(saved_locations)} 件の場所が登録されています。")
+            selected_locations = st.multiselect(
+                "削除する場所を選択",
+                options=saved_locations,
+                key="locations_to_delete",
+            )
+            if st.button(
+                "選択した場所を削除",
+                key="delete_locations_button",
+                disabled=not selected_locations,
+            ):
+                removed = delete_locations(selected_locations)
+                st.session_state.pop("locations_to_delete", None)
+                set_flash(f"登録場所を{removed}件削除しました。")
+                st.rerun()
+        else:
+            st.info("登録済みの場所はありません。")
+
+    st.subheader("検出結果")
     if not records:
-        st.info("まだ保存データがありません。画像を判定して保存してください。")
+        st.info("保存データはまだありません。画像を判定して保存すると、ここに表示されます。")
     else:
         indexed_records = list(enumerate(records))
         indexed_records.reverse()
         labels = [
-            f'{r.get("日時", "")} | {r.get("グループ", "")} | '
-            f'{r.get("場所", "")} | {r.get("最終合計", "")}本'
+            f'{r.get("日時", "")}　｜　{r.get("グループ", "")}　｜　'
+            f'{r.get("場所", "")}　｜　{r.get("最終合計", "")} 本'
             for _, r in indexed_records
         ]
-        st.subheader("保存データ一覧")
-        st.caption(f"保存されている全 {len(records)} 件を確認できます。")
+
+        st.caption(f"新しいデータから順に表示しています（全 {len(records)} 件）。")
         selected = st.selectbox(
-            "詳細を確認するデータ",
+            "確認するデータを選択",
             range(len(indexed_records)),
             format_func=lambda i: labels[i],
+            key="saved_record_selector",
         )
         original_index, record = indexed_records[selected]
-        st.subheader("選択したデータの内容")
-        st.dataframe([record], use_container_width=True)
 
+        st.markdown("#### 選択したデータ")
+        st.markdown(
+            f"**{record.get('グループ', 'グループ未設定')}**"
+            f"　・　{record.get('場所', '場所未設定')}"
+        )
+
+        detail_items = [
+            ("日時", record.get("日時", "未登録")),
+            ("AI検出数", f"{record.get('AI検出数', '0')} 本"),
+            ("手動追加数", f"{record.get('手動追加数', '0')} 本"),
+            ("最終合計", f"{record.get('最終合計', '0')} 本"),
+            ("グループ", record.get("グループ", "未設定")),
+            ("場所", record.get("場所", "未設定")),
+        ]
+        detail_cols = st.columns(2)
+        for i, (label, value) in enumerate(detail_items):
+            with detail_cols[i % 2]:
+                st.markdown(
+                    f"""
+                    <div style="
+                        background: var(--secondary-background-color);
+                        border: 1px solid rgba(128,128,128,0.18);
+                        border-radius: 10px;
+                        padding: 12px 14px;
+                        margin-bottom: 10px;
+                        min-height: 68px;
+                    ">
+                        <div style="font-size: 0.78rem; opacity: 0.72; margin-bottom: 5px;">{escape(str(label))}</div>
+                        <div style="font-size: 1.05rem; font-weight: 650; overflow-wrap: anywhere;">{escape(str(value))}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        if str(record.get("備考", "")).strip():
+            st.markdown("**備考**")
+            st.info(record.get("備考", ""))
+
+        st.divider()
+        st.markdown("#### ダウンロード・プレビュー")
         export_data = create_saved_record_export(record)
         export_name = export_basename(record)
-        download_col, preview_col = st.columns([3, 1])
+        download_col, preview_col = st.columns([2, 1])
         with download_col:
             st.download_button(
-                "⬇️ 全保存データのCSVとHTMLをダウンロード",
+                "⬇️ 全保存データをZIPでダウンロード",
                 data=export_data,
                 file_name=f"{export_name}_全データ.zip",
                 mime="application/zip",
@@ -376,10 +440,10 @@ if page == "保存データを確認する":
                         min-height: 42px;
                         box-sizing: border-box;
                         padding: 0.25rem 0.75rem;
-                        border: 1px solid rgba(49, 51, 63, 0.2);
+                        border: 1px solid rgba(128,128,128,0.35);
                         border-radius: 0.5rem;
                         color: inherit;
-                        background: white;
+                        background: var(--background-color, white);
                         font-size: 14px;
                         font-weight: 600;
                         cursor: pointer;
@@ -416,40 +480,43 @@ if page == "保存データを確認する":
                 scrolling=False,
             )
 
-        st.success(
-            "ダウンロードする際に、ZIPファイルには保存済みの全検出結果を含めます。"
-            "必要ないデータは下のボタンで削除してからダウンロードを行ってください。"
-            "なおZIPファイルにはCSVとHTMLファイルがあります。"
+        st.caption(
+            "ZIPには、保存済み全データのCSVとHTMLレポートが含まれます。"
+            "HTMLでは検出結果をまとめて確認できます。"
         )
 
-        st.divider()
-        st.subheader("保存データの一括削除")
-        deletion_choices = {
-            f'{r.get("日時", "")} | {r.get("グループ", "")} | '
-            f'{r.get("場所", "")} | {r.get("最終合計", "")}本（CSV行 {i + 1}）': i
-            for i, r in enumerate(records)
-        }
-        selected_delete_labels = st.multiselect(
-            "削除するデータを複数選択してください",
-            options=list(deletion_choices.keys()),
-            key="records_to_delete",
-        )
-        st.warning("選択したデータは統合CSVからまとめて削除されます。この操作は元に戻せません。")
-        if st.button(
-            "🗑️ 選択したデータをまとめて削除",
-            type="secondary",
-            disabled=not selected_delete_labels,
-        ):
-            delete_indices = [deletion_choices[label] for label in selected_delete_labels]
-            if delete_results(delete_indices):
-                set_flash(f"{len(delete_indices)}件の検出結果を削除しました。過去の場所は保持しています。")
-                st.session_state.pop("records_to_delete", None)
-                st.rerun()
-            else:
-                st.error("データを削除できませんでした。")
+        with st.expander("🗑️ 保存データの一括削除", expanded=False):
+            deletion_choices = {
+                f'{r.get("日時", "")} | {r.get("グループ", "")} | '
+                f'{r.get("場所", "")} | {r.get("最終合計", "")}本（CSV行 {i + 1}）': i
+                for i, r in enumerate(records)
+            }
+            selected_delete_labels = st.multiselect(
+                "削除するデータを選択",
+                options=list(deletion_choices.keys()),
+                key="records_to_delete",
+            )
+            st.warning("選択したデータは統合CSVから削除されます。この操作は元に戻せません。")
+            if st.button(
+                "選択したデータをまとめて削除",
+                type="secondary",
+                disabled=not selected_delete_labels,
+                key="delete_saved_records_button",
+            ):
+                delete_indices = [deletion_choices[label] for label in selected_delete_labels]
+                if delete_results(delete_indices):
+                    set_flash(
+                        f"{len(delete_indices)}件の検出結果を削除しました。登録済みの場所は保持しています。"
+                    )
+                    st.session_state.pop("records_to_delete", None)
+                    st.rerun()
+                else:
+                    st.error("データを削除できませんでした。")
 
-    st.caption(f"統合CSVの保存先: {CSV_PATH}")
-    st.caption("上のダウンロードボタンから、CSVとHTMLをセットで取得できます。")
+    with st.expander("保存先について", expanded=False):
+        st.caption(f"統合CSVの保存先: {CSV_PATH}")
+        st.caption("ZIPファイルにはCSVとHTMLファイルが格納されます。")
+
     st.stop()
 
 
